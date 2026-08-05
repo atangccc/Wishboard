@@ -24,10 +24,3 @@ Thumbs.db
 
 # Keep the Gradle wrapper binary
 !gradle/wrapper/gradle-wrapper.jar
-
-# Private core implementation
-src/main/java/cn/aobp/wishboard/AiService.java
-src/main/java/cn/aobp/wishboard/WishRouter.java
-src/main/java/cn/aobp/wishboard/WishPublicRouter.java
-src/main/java/cn/aobp/wishboard/WishService.java
-src/main/java/cn/aobp/wishboard/WishTypeService.java
