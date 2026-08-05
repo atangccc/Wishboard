@@ -89,10 +89,9 @@
 
 | 插件版本 | Halo 版本 | 备注 |
 |---------|----------|------|
-| ≥ 1.0.47 | 2.23.0+ | 适配 `tools.jackson` 命名空间 + Reactor 3.8.3 空值防御 |
-| ≤ 1.0.46 | 2.22.x 及以下 | 使用旧版 `com.fasterxml.jackson` API |
+| 1.5.0 | 2.23.0+ | 适配 `tools.jackson` 命名空间 + Reactor 3.8.3 空值防御 |
 
-> **升级提示**：Halo 2.23 将 `SettingFetcher.get()` 返回类型从 `com.fasterxml.jackson.databind.JsonNode` 变更为 `tools.jackson.databind.JsonNode`，同时 Reactor 3.8.3 的 `cacheInvalidateIf` 不允许空完成。1.0.47 已迁移至 `getSettingValue()` 并添加 `onErrorResume` 防御。
+> **升级提示**：Halo 2.23 将 `SettingFetcher.get()` 返回类型从 `com.fasterxml.jackson.databind.JsonNode` 变更为 `tools.jackson.databind.JsonNode`，同时 Reactor 3.8.3 的 `cacheInvalidateIf` 不允许空完成。1.5.0 已迁移至 `getSettingValue()` 并添加 `onErrorResume` 防御。
 
 ## 环境要求
 
@@ -303,3 +302,15 @@
 | `description` | `String` | 描述 |
 | `builtIn` | `boolean` | 是否内置类型（内置不可删除） |
 | `priority` | `int` | 排序权重，越小越靠前 |
+
+## 二次开发与借鉴说明
+
+如果你基于本项目进行二次开发、功能移植或实现思路借鉴，请主动告知开发者。这有助于了解项目的实际使用情况、协调兼容性，并减少重复开发。
+
+- 开发者：Serenity
+- 项目主页：https://www.aobp.cn
+- GitHub：https://github.com/atangccc
+
+上述告知属于社区协作倡议，不限制 GPL-3.0 已授予的复制、修改和再分发权利。发布或分发衍生作品时，仍需遵守 GPL-3.0 的源代码提供、许可证保留和版权声明要求。
+
+如需获取与发布制品对应的完整源代码，请通过项目主页或 GitHub 联系开发者。
