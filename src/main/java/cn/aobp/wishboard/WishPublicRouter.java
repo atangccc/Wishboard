@@ -13,9 +13,6 @@ import run.halo.app.core.extension.endpoint.CustomEndpoint;
 import run.halo.app.extension.GroupVersion;
 import run.halo.app.plugin.ReactiveSettingFetcher;
 import cn.aobp.wishboard.model.Wish;
-import tools.jackson.databind.JsonNode;
-import tools.jackson.databind.json.JsonMapper;
-
 import java.net.InetSocketAddress;
 import java.time.Instant;
 import java.util.Map;
@@ -35,13 +32,12 @@ public class WishPublicRouter implements CustomEndpoint {
     private final AiService aiService;
     private final ReactiveSettingFetcher settingFetcher;
 
-    private static final JsonMapper JACKSON_MAPPER = JsonMapper.builder().build();
-
     /**
      * 安全获取设置值，防御 Reactor 3.8.3 cacheInvalidateIf 空完成异常。
      */
-    private Mono<JsonNode> getSetting(String group) {
-        return settingFetcher.getSettingValue(group)
+    @SuppressWarnings("unchecked")
+    private Mono<Object> getSetting(String group) {
+        return ((Mono<Object>) (Mono<?>) settingFetcher.getSettingValue(group))
             .onErrorResume(e -> Mono.empty());
     }
 
@@ -64,7 +60,7 @@ public class WishPublicRouter implements CustomEndpoint {
         // 安全检查：后端强制校验 enableSubmit，防止绕过前端直接调用 API
         return getSetting("treehole")
             .flatMap(treeholeSetting -> {
-                if (!treeholeSetting.path("enableSubmit").asBoolean(true)) {
+                if (!SettingValues.bool(treeholeSetting, "enableSubmit", true)) {
                     return ServerResponse.status(403)
                         .contentType(MediaType.APPLICATION_JSON)
                         .bodyValue(Map.of("error", "投稿功能已关闭"));
@@ -75,7 +71,7 @@ public class WishPublicRouter implements CustomEndpoint {
     }
 
     private Mono<ServerResponse> doSubmitWish(ServerRequest request,
-                                               JsonNode treeholeSetting) {
+                                               Object treeholeSetting) {
         return request.bodyToMono(Map.class).flatMap(body -> {
             String content = stripHtml((String) body.getOrDefault("content", ""));
             String nickname = stripHtml((String) body.getOrDefault("nickname", "匿名"));
@@ -101,14 +97,14 @@ public class WishPublicRouter implements CustomEndpoint {
             final String safeColor = color;
 
             // 使用已获取的 treeholeSetting（可能为 null）
-            Mono<JsonNode> treeholeMono = treeholeSetting != null
+            Mono<Object> treeholeMono = treeholeSetting != null
                 ? Mono.just(treeholeSetting)
                 : getSetting("treehole");
 
             return treeholeMono.flatMap(ts -> {
-                int rateLimit = ts.path("rateLimit").asInt(3);
-                int maxLength = ts.path("maxLength").asInt(200);
-                String blockedWords = ts.path("blockedWords").asText("");
+                int rateLimit = SettingValues.integer(ts, "rateLimit", 3);
+                int maxLength = SettingValues.integer(ts, "maxLength", 200);
+                String blockedWords = SettingValues.text(ts, "blockedWords", "");
 
                 if (content.length() > maxLength) {
                     return ServerResponse.badRequest()
@@ -140,7 +136,7 @@ public class WishPublicRouter implements CustomEndpoint {
                 wish.getSpec().setCreatedAt(Instant.now());
                 wish.setMetadata(new run.halo.app.extension.Metadata());
 
-                String reviewMode = treeholeSetting.path("reviewMode").asText("ai");
+                String reviewMode = SettingValues.text(ts, "reviewMode", "ai");
                 return determineStatus(reviewMode, content, wish);
             });
         });
@@ -154,15 +150,11 @@ public class WishPublicRouter implements CustomEndpoint {
             statusMono = Mono.just("pending_review");
         } else {
             statusMono = getSetting("ai").flatMap(aiSetting -> {
-                if (!aiSetting.path("enabled").asBoolean(false) ||
-                    !aiSetting.path("enableContentReview").asBoolean(false)) {
+                if (!SettingValues.bool(aiSetting, "enabled", false) ||
+                    !SettingValues.bool(aiSetting, "enableContentReview", false)) {
                     return Mono.just("pending_review");
                 }
-                String apiBase = aiSetting.path("apiBase").asText("");
-                String apiKey = aiSetting.path("apiKey").asText("");
-                String model = resolveModel(aiSetting);
-                return aiService.reviewContent(content, wish.getSpec().getNickname(),
-                        apiBase, apiKey, model)
+                return aiService.reviewContent(content, wish.getSpec().getNickname())
                     .map(passed -> passed ? "approved" : "pending_review");
             }).onErrorResume(e -> {
                 log.warn("[Wishboard] AI review failed, fallback to manual: {}", e.getMessage());
@@ -192,24 +184,21 @@ public class WishPublicRouter implements CustomEndpoint {
 
     private Mono<Wish> enrichWithAi(Wish wish) {
         return getSetting("ai").flatMap(aiSetting -> {
-            if (!aiSetting.path("enabled").asBoolean(false)) {
+            if (!SettingValues.bool(aiSetting, "enabled", false)) {
                 return Mono.just(wish);
             }
-            String apiBase = aiSetting.path("apiBase").asText("");
-            String apiKey = aiSetting.path("apiKey").asText("");
-            String model = resolveModel(aiSetting);
             String content = wish.getSpec().getContent();
 
             Mono<String> replyMono = Mono.just("");
             Mono<String> emotionMono = Mono.just("💭");
 
-            if (aiSetting.path("enableWarmReply").asBoolean(false)) {
-                String prompt = aiSetting.path("warmReplyPrompt").asText(
+            if (SettingValues.bool(aiSetting, "enableWarmReply", false)) {
+                String prompt = SettingValues.text(aiSetting, "warmReplyPrompt",
                     "你是一个温暖的树洞倾听者。用简短温暖的一句话回应，不超过30字，带一个合适的emoji。");
-                replyMono = aiService.generateWarmReply(content, apiBase, apiKey, model, prompt);
+                replyMono = aiService.generateWarmReply(content, prompt);
             }
-            if (aiSetting.path("enableEmotionTag").asBoolean(false)) {
-                emotionMono = aiService.detectEmotion(content, apiBase, apiKey, model);
+            if (SettingValues.bool(aiSetting, "enableEmotionTag", false)) {
+                emotionMono = aiService.detectEmotion(content);
             }
 
             return Mono.zip(replyMono, emotionMono).map(tuple -> {
@@ -227,7 +216,7 @@ public class WishPublicRouter implements CustomEndpoint {
         // 安全检查：投稿关闭时润色也不可用
         return getSetting("treehole")
             .flatMap(treeholeSetting -> {
-                if (!treeholeSetting.path("enableSubmit").asBoolean(true)) {
+                if (!SettingValues.bool(treeholeSetting, "enableSubmit", true)) {
                     return ServerResponse.status(403)
                         .contentType(MediaType.APPLICATION_JSON)
                         .bodyValue(Map.of("error", "投稿功能已关闭"));
@@ -246,7 +235,7 @@ public class WishPublicRouter implements CustomEndpoint {
             }
             return getSetting("treehole").flatMap(treeholeSetting -> {
                 // 先用敏感词黑名单拦截，避免浪费 AI 额度
-                String blockedWords = treeholeSetting.path("blockedWords").asText("");
+                String blockedWords = SettingValues.text(treeholeSetting, "blockedWords", "");
                 if (!blockedWords.isBlank()) {
                     for (String word : blockedWords.split("\n")) {
                         String w = word.trim();
@@ -257,41 +246,27 @@ public class WishPublicRouter implements CustomEndpoint {
                     }
                 }
                 return getSetting("ai").flatMap(aiSetting -> {
-                    if (!aiSetting.path("enabled").asBoolean(false)) {
+                    if (!SettingValues.bool(aiSetting, "enabled", false)) {
                         return ServerResponse.ok().bodyValue(Map.of("polished", content));
                     }
-                    String apiBase = aiSetting.path("apiBase").asText("");
-                    String apiKey = aiSetting.path("apiKey").asText("");
-                    String model = resolveModel(aiSetting);
                     String prompt = "你是一个文案助手。将用户的心愿润色得更有诗意和仪式感，保持原意，不超过50字，可以加emoji。";
-                    return aiService.generateWarmReply(content, apiBase, apiKey, model, prompt)
+                    return aiService.generateWarmReply(content, prompt)
                         .flatMap(polished -> ServerResponse.ok()
                             .bodyValue(Map.of("polished", polished.isBlank() ? content : polished)));
                 });
             }).switchIfEmpty(
                 // treehole 设置不存在时直接走 AI
                 getSetting("ai").flatMap(aiSetting -> {
-                    if (!aiSetting.path("enabled").asBoolean(false)) {
+                    if (!SettingValues.bool(aiSetting, "enabled", false)) {
                         return ServerResponse.ok().bodyValue(Map.of("polished", content));
                     }
-                    String apiBase = aiSetting.path("apiBase").asText("");
-                    String apiKey = aiSetting.path("apiKey").asText("");
-                    String model = resolveModel(aiSetting);
                     String prompt = "你是一个文案助手。将用户的心愿润色得更有诗意和仪式感，保持原意，不超过50字，可以加emoji。";
-                    return aiService.generateWarmReply(content, apiBase, apiKey, model, prompt)
+                    return aiService.generateWarmReply(content, prompt)
                         .flatMap(polished -> ServerResponse.ok()
                             .bodyValue(Map.of("polished", polished.isBlank() ? content : polished)));
                 })
             );
         });
-    }
-
-    private String resolveModel(JsonNode aiSetting) {
-        String customModel = aiSetting.path("customModel").asText("").trim();
-        if (!customModel.isEmpty()) {
-            return customModel;
-        }
-        return aiSetting.path("model").asText("gpt-4o-mini");
     }
 
     /**

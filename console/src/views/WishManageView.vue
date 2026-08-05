@@ -289,7 +289,7 @@ const sLoading = ref(false);
 const sSaving = ref(false);
 const basic = ref({ pageTitle: "心愿墙", pageSubtitle: "写下你的心愿，留下你的故事", showDaysCounter: false, anniversaryDate: "", partnerNameA: "", partnerNameB: "", enableBuiltinPage: false });
 const treehole = ref({ enableSubmit: true, reviewMode: "ai", rateLimit: 3, maxLength: 200, blockedWords: "" });
-const ai = ref({ enabled: false, provider: "openai", apiBase: "https://api.openai.com", apiKey: "", model: "gpt-4o-mini", customModel: "", enableWarmReply: true, enableEmotionTag: true, enableContentReview: true, warmReplyPrompt: "" });
+const ai = ref({ enabled: false, enableWarmReply: true, enableEmotionTag: true, enableContentReview: true, warmReplyPrompt: "" });
 const notification = ref({ enabled: false, recipientEmail: "" });
 
 async function fetchSettings() {
@@ -589,6 +589,7 @@ onMounted(() => {
                   <div class="wb-s-toggle-info"><span class="wb-s-toggle-label">启用插件内置页面</span><span class="wb-s-toggle-desc">开启后插件直接提供 /wishes 页面路由；关闭时需在后台「页面」中创建自定义页面（模板选「便签墙」，别名设为 wishes）</span></div>
                   <label class="wb-s-toggle"><input type="checkbox" v-model="basic.enableBuiltinPage" /><span class="wb-s-slider"></span></label>
                 </div>
+                <template v-if="basic.enableBuiltinPage">
                 <div class="wb-s-grid-2">
                   <div class="wb-s-field"><label>页面标题</label><input v-model="basic.pageTitle" /></div>
                   <div class="wb-s-field"><label>页面副标题</label><input v-model="basic.pageSubtitle" /></div>
@@ -602,6 +603,7 @@ onMounted(() => {
                   <div class="wb-s-field"><label>昵称 A</label><input v-model="basic.partnerNameA" /></div>
                   <div class="wb-s-field"><label>昵称 B</label><input v-model="basic.partnerNameB" /></div>
                 </div>
+                </template>
               </div>
             </div>
 
@@ -613,6 +615,7 @@ onMounted(() => {
                   <div class="wb-s-toggle-info"><span class="wb-s-toggle-label">允许前端投稿</span><span class="wb-s-toggle-desc">关闭后隐藏输入框，仅展示已有便签</span></div>
                   <label class="wb-s-toggle"><input type="checkbox" v-model="treehole.enableSubmit" /><span class="wb-s-slider"></span></label>
                 </div>
+                <template v-if="treehole.enableSubmit">
                 <div class="wb-s-field">
                   <label>审核模式</label>
                   <div class="wb-select" @click.stop="toggleDrop('reviewMode')">
@@ -628,6 +631,7 @@ onMounted(() => {
                   <div class="wb-s-field"><label>内容长度限制</label><input type="number" v-model.number="treehole.maxLength" min="10" max="500" /></div>
                 </div>
                 <div class="wb-s-field"><label>敏感词黑名单（每行一个）</label><textarea v-model="treehole.blockedWords" rows="2"></textarea></div>
+                </template>
               </div>
             </div>
 
@@ -655,41 +659,11 @@ onMounted(() => {
               <div class="wb-s-card-title"><span class="wb-s-dot" style="background:#a78bfa"></span>AI 设置</div>
               <div class="wb-s-card-body">
                 <div class="wb-s-toggle-item">
-                  <div class="wb-s-toggle-info"><span class="wb-s-toggle-label">启用 AI</span><span class="wb-s-toggle-desc">开启后可使用暖心回复、情绪标签、内容审核等功能</span></div>
+                  <div class="wb-s-toggle-info"><span class="wb-s-toggle-label">启用 AI</span><span class="wb-s-toggle-desc">开启后可使用暖心回复、情绪标签、内容审核等功能。AI 模型和服务商由 Halo AI Foundation 统一管理，Wishboard 使用其中配置的默认语言模型。</span></div>
                   <label class="wb-s-toggle"><input type="checkbox" v-model="ai.enabled" /><span class="wb-s-slider"></span></label>
                 </div>
                 <template v-if="ai.enabled">
-                  <div class="wb-s-grid-2">
-                    <div class="wb-s-field">
-                      <label>提供商</label>
-                      <div class="wb-select" @click.stop="toggleDrop('provider')">
-                        <div class="wb-select-trigger">{{ { openai: 'OpenAI', dashscope: '通义千问', deepseek: 'DeepSeek', custom: '自定义' }[ai.provider] || '请选择' }}<span class="wb-select-arrow" :class="{ open: openDropdown === 'provider' }"></span></div>
-                        <div v-if="openDropdown==='provider'" class="wb-select-dropdown">
-                          <div v-for="o in [{ v: 'openai', l: 'OpenAI' }, { v: 'dashscope', l: '通义千问' }, { v: 'deepseek', l: 'DeepSeek' }, { v: 'custom', l: '自定义 (OpenAI 兼容)' }]" :key="o.v" :class="['wb-select-item', { active: ai.provider === o.v }]" @click.stop="selectOpt(ai, 'provider', o.v)">{{ o.l }}</div>
-                        </div>
-                      </div>
-                    </div>
-                    <div class="wb-s-field"><label>API Key</label><input type="password" v-model="ai.apiKey" /></div>
-                  </div>
-                  <div class="wb-s-grid-2">
-                    <div class="wb-s-field"><label>API 地址</label><input v-model="ai.apiBase" /></div>
-                    <div class="wb-s-field">
-                      <label>模型</label>
-                      <div class="wb-select" @click.stop="toggleDrop('model')">
-                        <div class="wb-select-trigger">{{ ai.customModel || ai.model || '请选择' }}<span class="wb-select-arrow" :class="{open: openDropdown==='model'}"></span></div>
-                        <div v-if="openDropdown==='model'" class="wb-select-dropdown">
-                          <div class="wb-select-group">OpenAI</div>
-                          <div v-for="m in ['gpt-4o-mini','gpt-4o','gpt-3.5-turbo']" :key="m" :class="['wb-select-item',{active:ai.model===m}]" @click.stop="selectOpt(ai,'model',m)">{{ m }}</div>
-                          <div class="wb-select-group">通义千问</div>
-                          <div v-for="m in ['qwen-turbo','qwen-plus','qwen-max']" :key="m" :class="['wb-select-item',{active:ai.model===m}]" @click.stop="selectOpt(ai,'model',m)">{{ m }}</div>
-                          <div class="wb-select-group">DeepSeek</div>
-                          <div v-for="m in ['deepseek-chat','deepseek-reasoner']" :key="m" :class="['wb-select-item',{active:ai.model===m}]" @click.stop="selectOpt(ai,'model',m)">{{ m }}</div>
-                        </div>
-                      </div>
-                    </div>
-                  </div>
-                  <div class="wb-s-field"><label>自定义模型名称（填写后优先使用）</label><input v-model="ai.customModel" placeholder="留空则使用上方选择的模型" /></div>
-                  <div class="wb-s-divider"></div>
+                    <div class="wb-s-divider"></div>
                   <div class="wb-s-toggle-item">
                     <div class="wb-s-toggle-info"><span class="wb-s-toggle-label">暖心回复</span><span class="wb-s-toggle-desc">AI 自动为每条便签生成一句温暖的回应</span></div>
                     <label class="wb-s-toggle"><input type="checkbox" v-model="ai.enableWarmReply" /><span class="wb-s-slider"></span></label>

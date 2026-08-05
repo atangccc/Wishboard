@@ -2,9 +2,13 @@ apiVersion: plugin.halo.run/v1alpha1
 kind: Plugin
 metadata:
   name: PluginWishboard
+  annotations:
+    "store.halo.run/recommended-apps": '["app-acslk9nu"]'
 spec:
   enabled: true
-  requires: ">=2.23.0"
+  requires: ">=2.25.0"
+  pluginDependencies:
+    ai-foundation?: ">=1.0.0 & <2.0.0"
   version: "${pluginVersion}"
   author:
     name: Serenity

@@ -1,111 +1,138 @@
 package cn.aobp.wishboard;
 
-import com.fasterxml.jackson.databind.JsonNode;
-import com.fasterxml.jackson.databind.ObjectMapper;
+import java.lang.reflect.Method;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
 import reactor.core.publisher.Mono;
-import run.halo.app.infra.utils.JsonUtils;
+import run.halo.app.plugin.extensionpoint.ExtensionGetter;
 
-import java.net.URI;
-import java.net.http.HttpClient;
-import java.net.http.HttpRequest;
-import java.net.http.HttpResponse;
-import java.time.Duration;
-import java.util.List;
-import java.util.Map;
-
-/**
- * AI 服务：暖心回复、情绪标签、内容审核。
- * 支持 OpenAI 兼容接口（OpenAI / DeepSeek / 通义千问）。
- */
+/** AI features backed by the optional Halo AI Foundation plugin. */
 @Slf4j
 @Service
 public class AiService {
+    private final ExtensionGetter extensionGetter;
 
-    private final HttpClient httpClient = HttpClient.newBuilder()
-        .connectTimeout(Duration.ofSeconds(10))
-        .build();
-
-    /**
-     * 生成暖心回复
-     */
-    public Mono<String> generateWarmReply(String content, String apiBase,
-                                          String apiKey, String model,
-                                          String systemPrompt) {
-        return callChat(apiBase, apiKey, model, systemPrompt, content)
-            .onErrorResume(e -> {
-                log.warn("[Wishboard AI] Warm reply failed: {}", e.getMessage());
-                return Mono.just("");
-            });
+    public AiService(ExtensionGetter extensionGetter) {
+        this.extensionGetter = extensionGetter;
     }
 
-    /**
-     * 识别情绪标签，返回单个 emoji
-     */
-    public Mono<String> detectEmotion(String content, String apiBase,
-                                      String apiKey, String model) {
-        String prompt = "分析以下文字的情绪，只返回一个最合适的emoji，不要返回其他任何内容。";
-        return callChat(apiBase, apiKey, model, prompt, content)
-            .map(String::trim)
-            .onErrorResume(e -> {
-                log.warn("[Wishboard AI] Emotion detect failed: {}", e.getMessage());
-                return Mono.just("💭");
-            });
-    }
-
-    /**
-     * 内容审核，返回 true 表示通过
-     */
-    public Mono<Boolean> reviewContent(String content, String nickname,
-                                       String apiBase, String apiKey, String model) {
-        String prompt = "你是内容审核员。判断以下用户的昵称和留言内容是否包含违规内容" +
-            "（色情、暴力、广告、政治敏感、人身攻击、不雅词汇）。" +
-            "只回答 PASS 或 REJECT，不要解释。";
-        String combined = "昵称: " + nickname + "\n内容: " + content;
-        return callChat(apiBase, apiKey, model, prompt, combined)
-            .map(reply -> reply.trim().toUpperCase().contains("PASS"))
-            .onErrorResume(e -> {
-                log.warn("[Wishboard AI] Content review failed: {}", e.getMessage());
-                return Mono.just(false);
-            });
-    }
-
-    private Mono<String> callChat(String apiBase, String apiKey, String model,
-                                  String systemPrompt, String userContent) {
-        return Mono.fromCallable(() -> {
-            ObjectMapper mapper = JsonUtils.DEFAULT_JSON_MAPPER;
-            var messages = List.of(
-                Map.of("role", "system", "content", systemPrompt),
-                Map.of("role", "user", "content", userContent)
-            );
-            var body = Map.of(
-                "model", model,
-                "messages", messages,
-                "max_tokens", 100,
-                "temperature", 0.7
-            );
-            String jsonBody = mapper.writeValueAsString(body);
-            String url = apiBase.replaceAll("/+$", "") + "/v1/chat/completions";
-
-            HttpRequest request = HttpRequest.newBuilder()
-                .uri(URI.create(url))
-                .header("Content-Type", "application/json")
-                .header("Authorization", "Bearer " + apiKey)
-                .POST(HttpRequest.BodyPublishers.ofString(jsonBody))
-                .timeout(Duration.ofSeconds(30))
-                .build();
-
-            HttpResponse<String> response = httpClient.send(request,
-                HttpResponse.BodyHandlers.ofString());
-            int statusCode = response.statusCode();
-            if (statusCode < 200 || statusCode >= 300) {
-                throw new RuntimeException(
-                    "AI API error: HTTP " + statusCode + " - " + response.body());
+    private Mono<String> generate(String content, String systemPrompt) {
+        return Mono.defer(() -> {
+            try {
+                Class<?> serviceType = Class.forName("run.halo.aifoundation.AiModelService");
+                Object requestBuilder = invokeStatic(
+                    "run.halo.aifoundation.chat.GenerateTextRequest", "builder");
+                invoke(requestBuilder, "system", systemPrompt);
+                invoke(requestBuilder, "prompt", content);
+                invoke(requestBuilder, "temperature", 0.2d);
+                invoke(requestBuilder, "maxOutputTokens", 256);
+                Object request = invoke(requestBuilder, "build");
+                @SuppressWarnings({"unchecked", "rawtypes"})
+                Mono<Object> extensionMono = (Mono<Object>) (Mono<?>)
+                    extensionGetter.getEnabledExtension((Class) serviceType);
+                return extensionMono
+                    .switchIfEmpty(Mono.error(
+                        new IllegalStateException("AI Foundation 未启用")))
+                    .flatMap(extension -> {
+                        try {
+                            @SuppressWarnings("unchecked")
+                            Mono<Object> modelMono = (Mono<Object>) invoke(extension,
+                                "languageModel");
+                            return modelMono;
+                        } catch (Exception e) {
+                            return Mono.error(e);
+                        }
+                    })
+                    .flatMap(model -> {
+                        try {
+                            @SuppressWarnings("unchecked")
+                            Mono<Object> result = (Mono<Object>) invoke(model,
+                                "generateText", request);
+                            return result;
+                        } catch (Exception e) {
+                            return Mono.error(e);
+                        }
+                    })
+                    .map(value -> {
+                        try {
+                            Object text = invoke(value, "getText");
+                            return text == null ? "" : text.toString();
+                        } catch (Exception e) {
+                            throw new IllegalStateException(e);
+                        }
+                    });
+            } catch (ClassNotFoundException e) {
+                return Mono.error(new IllegalStateException("AI Foundation 未安装", e));
+            } catch (Exception e) {
+                return Mono.error(e);
             }
-            JsonNode root = mapper.readTree(response.body());
-            return root.path("choices").path(0)
-                .path("message").path("content").asText("");
         });
+    }
+
+    private static Object invoke(Object target, String methodName, Object... args) throws Exception {
+        for (Method method : target.getClass().getMethods()) {
+            if (method.getName().equals(methodName) && matches(method.getParameterTypes(), args)) {
+                return method.invoke(target, args);
+            }
+        }
+        throw new NoSuchMethodException(methodName);
+    }
+
+    private static boolean matches(Class<?>[] parameterTypes, Object[] args) {
+        if (parameterTypes.length != args.length) {
+            return false;
+        }
+        for (int i = 0; i < parameterTypes.length; i++) {
+            if (args[i] == null) {
+                if (parameterTypes[i].isPrimitive()) {
+                    return false;
+                }
+                continue;
+            }
+            Class<?> parameterType = wrap(parameterTypes[i]);
+            if (!parameterType.isAssignableFrom(args[i].getClass())) {
+                return false;
+            }
+        }
+        return true;
+    }
+
+    private static Class<?> wrap(Class<?> type) {
+        if (!type.isPrimitive()) {
+            return type;
+        }
+        if (type == int.class) return Integer.class;
+        if (type == double.class) return Double.class;
+        if (type == boolean.class) return Boolean.class;
+        if (type == long.class) return Long.class;
+        if (type == float.class) return Float.class;
+        if (type == short.class) return Short.class;
+        if (type == byte.class) return Byte.class;
+        if (type == char.class) return Character.class;
+        return type;
+    }
+
+    private static Object invokeStatic(String className, String methodName) throws Exception {
+        Class<?> type = Class.forName(className);
+        return type.getMethod(methodName).invoke(null);
+    }
+
+    public Mono<String> generateWarmReply(String content, String systemPrompt) {
+        return generate(content, systemPrompt).onErrorResume(e -> {
+            log.warn("[Wishboard AI] Warm reply failed: {}", e.getMessage());
+            return Mono.just("");
+        });
+    }
+
+    public Mono<String> detectEmotion(String content) {
+        return generate(content, "分析以下文字的情绪，只返回一个最合适的emoji，不要返回其他任何内容。")
+            .map(String::trim).onErrorResume(e -> Mono.just("💭"));
+    }
+
+    public Mono<Boolean> reviewContent(String content, String nickname) {
+        String prompt = "你是内容审核员。判断以下用户的昵称和留言内容是否包含违规内容（色情、暴力、广告、政治敏感、人身攻击、不雅词汇）。只回答 PASS 或 REJECT，不要解释。";
+        return generate("昵称: " + nickname + "\n内容: " + content, prompt)
+            .map(reply -> reply.trim().toUpperCase().contains("PASS"))
+            .onErrorResume(e -> Mono.just(false));
     }
 }

@@ -11,10 +11,8 @@ import org.springframework.web.reactive.function.server.ServerResponse;
 import reactor.core.publisher.Mono;
 import run.halo.app.plugin.ReactiveSettingFetcher;
 import run.halo.app.theme.TemplateNameResolver;
-import tools.jackson.databind.JsonNode;
-import tools.jackson.databind.json.JsonMapper;
-
 import java.util.HashMap;
+import java.util.Map;
 
 /**
  * 便签墙页面路由。
@@ -29,8 +27,6 @@ import java.util.HashMap;
 @Component
 @RequiredArgsConstructor
 public class WishPageRouter implements RouterFunction<ServerResponse> {
-
-    private static final JsonMapper JACKSON_MAPPER = JsonMapper.builder().build();
 
     private final TemplateNameResolver templateNameResolver;
     private final ReactiveSettingFetcher settingFetcher;
@@ -47,13 +43,9 @@ public class WishPageRouter implements RouterFunction<ServerResponse> {
             return Mono.empty();
         }
         // 动态读取设置：是否启用插件内置页面
-        var emptyNode = JACKSON_MAPPER.createObjectNode();
-        return settingFetcher.getSettingValue("basic")
-            .defaultIfEmpty(emptyNode)
-            .onErrorResume(e -> Mono.just(emptyNode))
+        return setting("basic")
             .flatMap(basic -> {
-                var v = basic.get("enableBuiltinPage");
-                boolean enabled = v != null && !v.isNull() && v.asBoolean(false);
+                boolean enabled = SettingValues.bool(basic, "enableBuiltinPage", false);
                 if (!enabled) {
                     // 不启用内置页面，返回空让 SinglePage 路由接管
                     return Mono.empty();
@@ -68,14 +60,9 @@ public class WishPageRouter implements RouterFunction<ServerResponse> {
     }
 
     Mono<ServerResponse> renderWishesPage(ServerRequest request) {
-        var emptyNode = JACKSON_MAPPER.createObjectNode();
-
-        var basicMono = settingFetcher.getSettingValue("basic").defaultIfEmpty(emptyNode)
-            .onErrorResume(e -> Mono.just(emptyNode));
-        var treeholeMono = settingFetcher.getSettingValue("treehole").defaultIfEmpty(emptyNode)
-            .onErrorResume(e -> Mono.just(emptyNode));
-        var aiMono = settingFetcher.getSettingValue("ai").defaultIfEmpty(emptyNode)
-            .onErrorResume(e -> Mono.just(emptyNode));
+        var basicMono = setting("basic");
+        var treeholeMono = setting("treehole");
+        var aiMono = setting("ai");
 
         return Mono.zip(basicMono, treeholeMono, aiMono)
             .map(tuple -> {
@@ -84,15 +71,15 @@ public class WishPageRouter implements RouterFunction<ServerResponse> {
                 var ai = tuple.getT3();
 
                 var model = new HashMap<String, Object>();
-                model.put("pageTitle", textVal(basic, "pageTitle", "心愿墙"));
-                model.put("pageSubtitle", textVal(basic, "pageSubtitle", "写下你的心愿，留下你的故事"));
-                model.put("showDaysCounter", boolVal(basic, "showDaysCounter", false));
-                model.put("anniversaryDate", textVal(basic, "anniversaryDate", ""));
-                model.put("partnerNameA", textVal(basic, "partnerNameA", ""));
-                model.put("partnerNameB", textVal(basic, "partnerNameB", ""));
-                model.put("maxContentLength", treehole.path("maxLength").asInt(200));
-                model.put("enableSubmit", treehole.path("enableSubmit").asBoolean(true));
-                model.put("aiEnabled", ai.path("enabled").asBoolean(false));
+                model.put("pageTitle", SettingValues.text(basic, "pageTitle", "心愿墙"));
+                model.put("pageSubtitle", SettingValues.text(basic, "pageSubtitle", "写下你的心愿，留下你的故事"));
+                model.put("showDaysCounter", SettingValues.bool(basic, "showDaysCounter", false));
+                model.put("anniversaryDate", SettingValues.text(basic, "anniversaryDate", ""));
+                model.put("partnerNameA", SettingValues.text(basic, "partnerNameA", ""));
+                model.put("partnerNameB", SettingValues.text(basic, "partnerNameB", ""));
+                model.put("maxContentLength", SettingValues.integer(treehole, "maxLength", 200));
+                model.put("enableSubmit", SettingValues.bool(treehole, "enableSubmit", true));
+                model.put("aiEnabled", SettingValues.bool(ai, "enabled", false));
                 return model;
             })
             .flatMap(model ->
@@ -101,13 +88,10 @@ public class WishPageRouter implements RouterFunction<ServerResponse> {
             );
     }
 
-    private String textVal(JsonNode node, String key, String def) {
-        var v = node.get(key);
-        return v != null && !v.isNull() && !v.asText().isEmpty() ? v.asText() : def;
-    }
-
-    private boolean boolVal(JsonNode node, String key, boolean def) {
-        var v = node.get(key);
-        return v != null && !v.isNull() ? v.asBoolean() : def;
+    @SuppressWarnings("unchecked")
+    private Mono<Object> setting(String group) {
+        return ((Mono<Object>) (Mono<?>) settingFetcher.getSettingValue(group))
+            .defaultIfEmpty(Map.of())
+            .onErrorReturn(Map.of());
     }
 }

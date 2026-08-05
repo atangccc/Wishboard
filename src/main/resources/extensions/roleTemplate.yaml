@@ -44,8 +44,6 @@ metadata:
     rbac.authorization.halo.run/display-name: "心愿便签管理"
     rbac.authorization.halo.run/ui-permissions: |
       ["plugin:wishboard:manage"]
-    rbac.authorization.halo.run/dependencies: |
-      ["wishboard-role-view"]
 rules:
   - apiGroups: ["console.api.wishboard.aobp.cn"]
     resources: ["wishes", "wishes/approve", "wishes/reject", "wishes/-/export", "wishes/-/import", "wish-types", "wish-types/-/stats"]

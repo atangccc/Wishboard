@@ -1,6 +1,6 @@
 {
   "name": "@halo-dev/plugin-wishboard",
-  "version": "1.5.0",
+  "version": "1.6.6",
   "description": "心愿便签插件前端",
   "license": "GPL-3.0",
   "type": "module",
