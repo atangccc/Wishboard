@@ -2,12 +2,17 @@ package cn.aobp.wishboard;
 
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
+import org.springframework.data.domain.Sort;
 import org.springframework.stereotype.Service;
 import reactor.core.publisher.Flux;
 import reactor.core.publisher.Mono;
 import run.halo.app.extension.ExtensionClient;
 import run.halo.app.extension.ListOptions;
+import run.halo.app.extension.ListResult;
+import run.halo.app.extension.PageRequestImpl;
 import run.halo.app.extension.ReactiveExtensionClient;
+import run.halo.app.extension.index.query.Queries;
+import cn.aobp.wishboard.model.PublicWish;
 import cn.aobp.wishboard.model.Wish;
 
 import java.time.Instant;
@@ -24,6 +29,27 @@ public class WishService {
 
     /** IP 限频记录: ip -> (timestamp, count) */
     private final Map<String, long[]> rateLimitMap = new ConcurrentHashMap<>();
+
+    /**
+     * 分页获取公开便签
+     */
+    public Mono<ListResult<PublicWish>> listPublic(PublicWishQuery query) {
+        var options = ListOptions.builder()
+            .andQuery(Queries.in("spec.status", PublicWishQuery.PUBLIC_STATUSES))
+            .andQuery(Queries.isNull("metadata.deletionTimestamp"));
+        if (query.getType() != null) {
+            options.andQuery(Queries.equal("spec.type", query.getType()));
+        }
+        if (query.getStatus() != null) {
+            options.andQuery(Queries.equal("spec.status", query.getStatus()));
+        }
+        var direction = "createdAt,asc".equals(query.getSort()) ? Sort.Direction.ASC : Sort.Direction.DESC;
+        var sort = Sort.by(direction, "spec.createdAt").and(Sort.by("metadata.name"));
+        return client.listBy(Wish.class, options.build(),
+                PageRequestImpl.of(query.getPage(), query.getSize(), sort))
+            .map(result -> new ListResult<>(result.getPage(), result.getSize(), result.getTotal(),
+                result.getItems().stream().map(PublicWish::from).toList()));
+    }
 
     public Flux<Wish> listApproved() {
         return client.listAll(Wish.class, ListOptions.builder().build(), null)
